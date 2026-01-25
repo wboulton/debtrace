@@ -57,7 +57,7 @@ struct table_row {
     publish_version: String,
     publish_sha256: String
 }
-
+#[derive(Debug)]
 struct pub_row {
     package_id: u64,
     package: String,
@@ -265,7 +265,7 @@ fn query_checksum(conn: &Connection, qr: &str) -> Result<Vec<checksum_row>> {
     Ok(results)
 }
 
-
+/*
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
 
@@ -314,3 +314,69 @@ fn main() -> Result<()> {
 
     Ok(())
 }
+    */
+
+fn main() -> Result<()> {
+    let args: Vec<String> = env::args().collect();
+
+    let conn = Connection::open("/home/cyberg/debtrace/data/debtrace.db")?;
+    let package = &args[1];
+    let version = &args[2];
+
+    let pub_query = format!("SELECT * FROM Publish_Packages WHERE package LIKE '%{}%' AND version LIKE '%{}%';", package, version);
+    let published: Result<Vec<pub_row>, rusqlite::Error> = query_bin(&conn, &pub_query);
+    match published {
+        Ok(pubs) if pubs.is_empty() => {
+            println!("could not find the published package {} with version {}", package, version);
+        }
+        Ok(pubs) => {
+            for publication in pubs {
+                println!("checking package {} version {}", publication.package, publication.version);
+                let source_query = format!("SELECT * FROM source_table WHERE source_name = '{}' AND version LIKE '%{}%';", publication.package, publication.version);
+                let source: Result<Vec<source_row>, rusqlite::Error> = query_source(&conn, &source_query);
+                match source {
+                    Ok(src) if src.is_empty() => {
+                        continue;
+                    }
+                    Ok(src) => {
+                        for source in src {
+                            let build_info_query = format!("SELECT * FROM buildinfo_table WHERE source_id = {};", source.source_id);
+                            let buildinfo: Result<Vec<buildinfo_row>, rusqlite::Error> = query_buildinfo(&conn, &build_info_query);
+                            match buildinfo {
+                                Ok(build) if build.is_empty() => {
+                                    continue;
+                                }
+                                Ok(build) => {
+                                    println!("path found from source to buildinfo to package:\nsource: {:?}\nbuildinfo: {:?}\npackage: {:?}", source, build, publication);
+                                    return Ok(())
+                                }
+                                Err(e) => {
+                                    eprintln!("Error querying buildinfo: {}", e);
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error querying source: {}", e);
+                        continue;
+                    }
+                }
+                
+            }
+        }
+        Err(e) => {
+            eprintln!("Error querying database: {}", e);
+        }
+    }
+    println!("No path found\n");
+    Ok(())
+}
+/*
+works for 0ad 0.0.23.1
+
+path found from source to buildinfo to package:
+source: source_row { source_id: 269932, source_name: "0ad", version: "0.0.23.1-2" }
+buildinfo: [buildinfo_row { buildinfo_id: 1813337, source_id: 269932, architecture: "kfreebsd-i386", source_raw: "0ad", build_origin: "Debian", build_architecture: "kfreebsd-i386", build_date: 2019-01-14T03:20:55Z, build_path: "/build/0ad-NyI3cw/0ad-0.0.23.1", environment: "\n DEB_BUILD_OPTIONS=\"parallel=2\"\n LC_ALL=\"POSIX\"\n SOURCE_DATE_EPOCH=\"1547026389\"" }, buildinfo_row { buildinfo_id: 1827636, source_id: 269932, architecture: "kfreebsd-amd64", source_raw: "0ad", build_origin: "Debian", build_architecture: "kfreebsd-amd64", build_date: 2019-01-09T13:08:17Z, build_path: "/build/0ad-3oVMdG/0ad-0.0.23.1", environment: "\n DEB_BUILD_OPTIONS=\"parallel=2\"\n LC_ALL=\"POSIX\"\n SOURCE_DATE_EPOCH=\"1547026389\"" }, buildinfo_row { buildinfo_id: 1834601, source_id: 269932, architecture: "armhf", source_raw: "0ad", build_origin: "Debian", build_architecture: "armhf", build_date: 2019-01-09T14:20:17Z, build_path: "/build/0ad-ipvuE6/0ad-0.0.23.1", environment: "\n DEB_BUILD_OPTIONS=\"parallel=4\"\n LC_ALL=\"POSIX\"\n SOURCE_DATE_EPOCH=\"1547026389\"" }, buildinfo_row { buildinfo_id: 1834733, source_id: 269932, architecture: "amd64 source", source_raw: "0ad", build_origin: "Debian", build_architecture: "amd64", build_date: 2019-01-09T09:48:29Z, build_path: "/build/0ad-0.0.23.1", environment: "\n CFLAGS=\" -Wall -g -O2 -Wextra -pipe -funsigned-char -fstrict-aliasing -Wchar-subscripts -Wundef -Wshadow -Wcast-align -Wwrite-strings -Wunused -Wuninitialized -Wpointer-arith -Wredundant-decls -Winline -Wformat -Wformat-security -Wswitch-enum -Winit-self -Wmissing-include-dirs -Wempty-body -fdiagnostics-color=auto -Wmissing-prototypes -Wstrict-prototypes -Wold-style-definition -Wbad-function-cast -Wnested-externs  -Wmissing-declarations\"\n CXXFLAGS=\" -Wall -g -O2 -Wextra -pipe -funsigned-char -fstrict-aliasing -Wchar-subscripts -Wundef -Wshadow -Wcast-align -Wwrite-strings -Wunused -Wuninitialized -Wpointer-arith -Wredundant-decls -Winline -Wformat -Wformat-security -Wswitch-enum -Winit-self -Wmissing-include-dirs -Wempty-body -fdiagnostics-color=auto\"\n DEB_BUILD_OPTIONS=\"parallel=5\"\n LANG=\"C\"\n LC_ALL=\"C\"\n MAKEFLAGS=\"-j5\"\n SOURCE_DATE_EPOCH=\"1547026389\"" }, buildinfo_row { buildinfo_id: 1834839, source_id: 269932, architecture: "i386", source_raw: "0ad", build_origin: "Debian", build_architecture: "i386", build_date: 2019-01-09T11:43:11Z, build_path: "/build/0ad-8c9Ndg/0ad-0.0.23.1", environment: "\n DEB_BUILD_OPTIONS=\"parallel=4\"\n LC_ALL=\"POSIX\"\n SOURCE_DATE_EPOCH=\"1547026389\"" }]
+package: pub_row { package_id: 1812078, package: "0ad", architecture: "amd64", version: "0.0.23.1-2", release: "buster", section: "games", size: "5471488", pool_endpoint: "pool/main/0/0ad/0ad_0.0.23.1-2_amd64.deb", dfsg: "main", time: "20190719T000000Z", md5: "4e9a3f5ddaba8bfc5c41980706f3910e", sha: "fb5c3af6d1d7cd7f1d3e8d2e04c1b8605b8c38f85e5c285a21c56eaf72f2bb47", provided_by: "" }
+*/
