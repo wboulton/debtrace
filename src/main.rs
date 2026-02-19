@@ -362,7 +362,7 @@ fn main() -> Result<()> {
         eprintln!("Usage: {} <package> <version>", args[0]);
         return Ok(());
     }
-
+    println!("running version 1\n");
     let conn = Connection::open("/home/cyberg/debtrace/debtrace_old.db")?;
     let package = &args[1];
     let version = &args[2];
@@ -401,13 +401,12 @@ fn main() -> Result<()> {
 
                         let path_token = sql_escape(&format!("{}-{}", pkg_token, ver_token));
                         println!("checking with path: {}", path_token);
-                        let build_info_query = format!(
+                        let build_info_query_strict = format!(
                             "SELECT * FROM buildinfo_table WHERE build_path LIKE '%{}%' AND (type LIKE '{}%' OR lower(type) = 'all');",
                             path_token, arch
                         );
 
-                        let buildinfos = match query_buildinfo(&conn, &build_info_query) {
-                            Ok(rows) if rows.is_empty() => continue,
+                        let buildinfos_strict = match query_buildinfo(&conn, &build_info_query_strict) {
                             Ok(rows) => rows,
                             Err(e) => {
                                 eprintln!("Error querying buildinfo: {}", e);
@@ -415,7 +414,57 @@ fn main() -> Result<()> {
                             }
                         };
 
-                        for buildinfo in buildinfos {
+                        let mut path_found = false;
+                        for buildinfo in buildinfos_strict {
+                            let source_query = format!(
+                                "SELECT * FROM source_table WHERE source_id = {};",
+                                buildinfo.source_id
+                            );
+
+                            let sources = match query_source(&conn, &source_query) {
+                                Ok(rows) if rows.is_empty() => continue,
+                                Ok(rows) => rows,
+                                Err(e) => {
+                                    eprintln!("Error querying source: {}", e);
+                                    continue;
+                                }
+                            };
+
+                            for source in sources {
+                                if fallback_used {
+                                    println!("FALLBACK PATH MATCHED using {}", path_token);
+                                }
+                                println!(
+                                    "path found from publication to buildinfo to source:\npublication: {:?}\nbuildinfo: {:?}\nsource: {:?}",
+                                    publication, buildinfo, source
+                                );
+                                return Ok(());
+                            }
+                            path_found = true;
+                        }
+
+                        if path_found {
+                            continue;
+                        }
+
+                        println!(
+                            "FALLBACK: trying any buildinfo architecture for path {}",
+                            path_token
+                        );
+                        let build_info_query_any_arch = format!(
+                            "SELECT * FROM buildinfo_table WHERE build_path LIKE '%{}%';",
+                            path_token
+                        );
+
+                        let buildinfos_any_arch = match query_buildinfo(&conn, &build_info_query_any_arch) {
+                            Ok(rows) => rows,
+                            Err(e) => {
+                                eprintln!("Error querying buildinfo (any arch): {}", e);
+                                continue;
+                            }
+                        };
+
+                        for buildinfo in buildinfos_any_arch {
                             let source_query = format!(
                                 "SELECT * FROM source_table WHERE source_id = {};",
                                 buildinfo.source_id

@@ -1,3 +1,3 @@
-found: 322
-tested: 660
-percent found: 48.78787878787879
+found: 624
+tested: 1400
+percent found: 44.57142857142857
