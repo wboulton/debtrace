@@ -1,6 +1,6 @@
-use rusqlite::{Connection, Result, types::Value, Statement, Rows, types::Null};
+use rusqlite::{Connection, Result};
 use std::env;
-use chrono::{prelude::*, offset::MappedLocalTime, Utc, DateTime};
+use chrono::{DateTime, NaiveDateTime, Utc};
 
 /*
 Could find no valid path from Publish_Packages to source_table to buildinfo_table to checksum_table.
@@ -63,7 +63,6 @@ struct pub_row {
     package: String,
     architecture: String,
     version: String,
-    release: String,
     section: String,
     size: String,
     pool_endpoint: String,
@@ -79,14 +78,14 @@ struct source_row {
     source_id: u64,
     source_name: String,
     version: String,
+    location: String,
 }
 
 #[derive(Debug)]
 struct buildinfo_row {
     buildinfo_id: u64,
     source_id: u64,
-    architecture: String,
-    source_raw: String,
+    kind: String,
     build_origin: String,
     build_architecture: String,
     build_date: DateTime<Utc>,
@@ -180,19 +179,18 @@ fn query_bin(conn: &Connection, qr: &str) -> Result<Vec<pub_row>> {
 
     while let Some(row) = rows.next()? {
         let r = pub_row {
-            package_id: row.get::<_, Option<u64>>(0)?.unwrap_or(0),
-            package: row.get::<_, Option<String>>(1)?.unwrap_or("".to_string()),
-            architecture: row.get::<_, Option<String>>(2)?.unwrap_or("".to_string()),
-            version: row.get::<_, Option<String>>(3)?.unwrap_or("".to_string()),
-            release: row.get::<_, Option<String>>(4)?.unwrap_or("".to_string()),
-            section: row.get::<_, Option<String>>(5)?.unwrap_or("".to_string()),
-            size: row.get::<_, Option<String>>(6)?.unwrap_or("".to_string()),
-            pool_endpoint: row.get::<_, Option<String>>(7)?.unwrap_or("".to_string()),
-            dfsg: row.get::<_, Option<String>>(8)?.unwrap_or("".to_string()),
-            time: row.get::<_, Option<String>>(9)?.unwrap_or("".to_string()),
-            md5: row.get::<_, Option<String>>(10)?.unwrap_or("".to_string()),
-            sha: row.get::<_, Option<String>>(11)?.unwrap_or("".to_string()),
-            provided_by: row.get::<_, Option<String>>(12)?.unwrap_or("".to_string()),
+            package_id: row.get::<_, Option<u64>>("Package_id")?.unwrap_or(0),
+            package: row.get::<_, Option<String>>("Package")?.unwrap_or("".to_string()),
+            architecture: row.get::<_, Option<String>>("Architecture")?.unwrap_or("".to_string()),
+            version: row.get::<_, Option<String>>("Version")?.unwrap_or("".to_string()),
+            section: row.get::<_, Option<String>>("Section")?.unwrap_or("".to_string()),
+            size: row.get::<_, Option<String>>("Size")?.unwrap_or("".to_string()),
+            pool_endpoint: row.get::<_, Option<String>>("pool_endpoint")?.unwrap_or("".to_string()),
+            dfsg: row.get::<_, Option<String>>("DFSG")?.unwrap_or("".to_string()),
+            time: row.get::<_, Option<String>>("Added_at")?.unwrap_or("".to_string()),
+            md5: row.get::<_, Option<String>>("MD5sum")?.unwrap_or("".to_string()),
+            sha: row.get::<_, Option<String>>("SHA256")?.unwrap_or("".to_string()),
+            provided_by: row.get::<_, Option<String>>("Provided_by")?.unwrap_or("".to_string()),
         };
         results.push(r);
     }
@@ -208,14 +206,32 @@ fn query_source(conn: &Connection, qr: &str) -> Result<Vec<source_row>> {
 
     while let Some(row) = rows.next()? {
         let r = source_row {
-            source_id: row.get::<_, Option<u64>>(0)?.unwrap_or(0),
-            source_name: row.get::<_, Option<String>>(1)?.unwrap_or("".to_string()),
-            version: row.get::<_, Option<String>>(2)?.unwrap_or("".to_string()),
+            source_id: row.get::<_, Option<u64>>("source_id")?.unwrap_or(0),
+            source_name: row.get::<_, Option<String>>("source_name")?.unwrap_or("".to_string()),
+            version: row.get::<_, Option<String>>("version")?.unwrap_or("".to_string()),
+            location: row.get::<_, Option<String>>("location")?.unwrap_or("".to_string()),
         };
         results.push(r);
     }
 
     Ok(results)
+}
+
+fn parse_build_date(input: &str) -> DateTime<Utc> {
+    if let Ok(dt) = DateTime::parse_from_rfc3339(input) {
+        return dt.with_timezone(&Utc);
+    }
+
+    if let Ok(naive) = NaiveDateTime::parse_from_str(input, "%Y-%m-%d %H:%M:%S") {
+        return naive.and_utc();
+    }
+
+    if let Ok(naive) = NaiveDateTime::parse_from_str(input, "%Y-%m-%dT%H:%M:%S") {
+        return naive.and_utc();
+    }
+
+    eprintln!("Warning: could not parse build date '{}' ; using UNIX epoch", input);
+    DateTime::<Utc>::from_timestamp(0, 0).expect("UNIX epoch timestamp is valid")
 }
 
 fn query_buildinfo(conn: &Connection, qr: &str) -> Result<Vec<buildinfo_row>> {
@@ -225,23 +241,46 @@ fn query_buildinfo(conn: &Connection, qr: &str) -> Result<Vec<buildinfo_row>> {
     let mut results = Vec::new();
 
     while let Some(row) = rows.next()? {
-        let tmp_date: String = row.get(6)?;
-        let parsed: DateTime<Utc> = tmp_date.parse().unwrap();
+        let tmp_date: String = row.get::<_, Option<String>>("build_date")?.unwrap_or_default();
+        let parsed = parse_build_date(&tmp_date);
         let r = buildinfo_row {
-            buildinfo_id: row.get::<_, Option<u64>>(0)?.unwrap_or(0),
-            source_id: row.get::<_, Option<u64>>(1)?.unwrap_or(0),
-            architecture: row.get::<_, Option<String>>(2)?.unwrap_or("".to_string()),
-            source_raw: row.get::<_, Option<String>>(3)?.unwrap_or("".to_string()),
-            build_origin: row.get::<_, Option<String>>(4)?.unwrap_or("".to_string()),
-            build_architecture: row.get::<_, Option<String>>(5)?.unwrap_or("".to_string()),
+            buildinfo_id: row.get::<_, Option<u64>>("buildinfo_id")?.unwrap_or(0),
+            source_id: row.get::<_, Option<u64>>("source_id")?.unwrap_or(0),
+            kind: row.get::<_, Option<String>>("type")?.unwrap_or("".to_string()),
+            build_origin: row.get::<_, Option<String>>("build_origin")?.unwrap_or("".to_string()),
+            build_architecture: row.get::<_, Option<String>>("build_architecture")?.unwrap_or("".to_string()),
             build_date: parsed,
-            build_path: row.get::<_, Option<String>>(7)?.unwrap_or("".to_string()),
-            environment: row.get::<_, Option<String>>(8)?.unwrap_or("".to_string()),
+            build_path: row.get::<_, Option<String>>("build_path")?.unwrap_or("".to_string()),
+            environment: row.get::<_, Option<String>>("environment")?.unwrap_or("".to_string()),
         };
         results.push(r);
     }
 
     Ok(results)
+}
+
+fn sql_escape(value: &str) -> String {
+    value.replace('\'', "''")
+}
+
+fn dash_prefixes(value: &str) -> Vec<String> {
+    let mut prefixes = Vec::new();
+    let mut current = value.trim().to_string();
+
+    if current.is_empty() {
+        return prefixes;
+    }
+
+    prefixes.push(current.clone());
+    while let Some(idx) = current.rfind('-') {
+        current.truncate(idx);
+        if current.is_empty() {
+            break;
+        }
+        prefixes.push(current.clone());
+    }
+
+    prefixes
 }
 
 fn query_checksum(conn: &Connection, qr: &str) -> Result<Vec<checksum_row>> {
@@ -319,11 +358,21 @@ fn main() -> Result<()> {
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
 
-    let conn = Connection::open("/home/cyberg/debtrace/data/debtrace.db")?;
+    if args.len() < 3 {
+        eprintln!("Usage: {} <package> <version>", args[0]);
+        return Ok(());
+    }
+
+    let conn = Connection::open("/home/cyberg/debtrace/debtrace_old.db")?;
     let package = &args[1];
     let version = &args[2];
 
-    let pub_query = format!("SELECT * FROM Publish_Packages WHERE package LIKE '%{}%' AND version LIKE '%{}%';", package, version);
+    let package_q = sql_escape(package);
+    let version_q = sql_escape(version);
+    let pub_query = format!(
+        "SELECT * FROM Publish_Packages WHERE Package LIKE '%{}%' AND Version LIKE '%{}%';",
+        package_q, version_q
+    );
     let published: Result<Vec<pub_row>, rusqlite::Error> = query_bin(&conn, &pub_query);
     match published {
         Ok(pubs) if pubs.is_empty() => {
@@ -332,37 +381,68 @@ fn main() -> Result<()> {
         Ok(pubs) => {
             for publication in pubs {
                 println!("checking package {} version {}", publication.package, publication.version);
-                let source_query = format!("SELECT * FROM source_table WHERE source_name = '{}' AND version LIKE '%{}%';", publication.package, publication.version);
-                let source: Result<Vec<source_row>, rusqlite::Error> = query_source(&conn, &source_query);
-                match source {
-                    Ok(src) if src.is_empty() => {
-                        continue;
+                let arch = sql_escape(&publication.architecture);
+
+                let package_tokens = dash_prefixes(&publication.package);
+                let version_tokens = dash_prefixes(&publication.version);
+                if package_tokens.is_empty() || version_tokens.is_empty() {
+                    continue;
+                }
+
+                for (pkg_cut_idx, pkg_token) in package_tokens.iter().enumerate() {
+                    for (ver_cut_idx, ver_token) in version_tokens.iter().enumerate() {
+                        let fallback_used = pkg_cut_idx > 0 || ver_cut_idx > 0;
+                    if fallback_used {
+                        println!(
+                            "FALLBACK: trying reduced token with package '{}' and version '{}'",
+                            pkg_token, ver_token
+                        );
                     }
-                    Ok(src) => {
-                        for source in src {
-                            let build_info_query = format!("SELECT * FROM buildinfo_table WHERE source_id = {};", source.source_id);
-                            let buildinfo: Result<Vec<buildinfo_row>, rusqlite::Error> = query_buildinfo(&conn, &build_info_query);
-                            match buildinfo {
-                                Ok(build) if build.is_empty() => {
-                                    continue;
-                                }
-                                Ok(build) => {
-                                    println!("path found from source to buildinfo to package:\nsource: {:?}\nbuildinfo: {:?}\npackage: {:?}", source, build, publication);
-                                    return Ok(())
-                                }
+
+                        let path_token = sql_escape(&format!("{}-{}", pkg_token, ver_token));
+                        println!("checking with path: {}", path_token);
+                        let build_info_query = format!(
+                            "SELECT * FROM buildinfo_table WHERE build_path LIKE '%{}%' AND (type LIKE '{}%' OR lower(type) = 'all');",
+                            path_token, arch
+                        );
+
+                        let buildinfos = match query_buildinfo(&conn, &build_info_query) {
+                            Ok(rows) if rows.is_empty() => continue,
+                            Ok(rows) => rows,
+                            Err(e) => {
+                                eprintln!("Error querying buildinfo: {}", e);
+                                continue;
+                            }
+                        };
+
+                        for buildinfo in buildinfos {
+                            let source_query = format!(
+                                "SELECT * FROM source_table WHERE source_id = {};",
+                                buildinfo.source_id
+                            );
+
+                            let sources = match query_source(&conn, &source_query) {
+                                Ok(rows) if rows.is_empty() => continue,
+                                Ok(rows) => rows,
                                 Err(e) => {
-                                    eprintln!("Error querying buildinfo: {}", e);
+                                    eprintln!("Error querying source: {}", e);
                                     continue;
                                 }
+                            };
+
+                            for source in sources {
+                                if fallback_used {
+                                    println!("FALLBACK PATH MATCHED using {}", path_token);
+                                }
+                                println!(
+                                    "path found from publication to buildinfo to source:\npublication: {:?}\nbuildinfo: {:?}\nsource: {:?}",
+                                    publication, buildinfo, source
+                                );
+                                return Ok(());
                             }
                         }
                     }
-                    Err(e) => {
-                        eprintln!("Error querying source: {}", e);
-                        continue;
-                    }
                 }
-                
             }
         }
         Err(e) => {
